@@ -1,0 +1,69 @@
+rules_version = '2';
+
+// Aturan keamanan Papan Proyek Kontraktor
+// - Admin & Tim internal: semua data proyek.
+// - Vendor: hanya ringkasan progres (progress/{id}) dan riwayat opname proyek yang ditugaskan.
+//   Vendor TIDAK bisa membaca RAB, harga, keuangan, termin, data klien, laporan harian, foto,
+//   data perusahaan, atau daftar pengguna.
+// - Email yang belum didaftarkan di menu "Pengguna & akses" tidak bisa membaca apa pun.
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // >>> GANTI dengan email pemilik (huruf kecil). Pemilik otomatis jadi Admin saat pertama masuk.
+    //     Bisa lebih dari satu: ['owner@gmail.com', 'partner@gmail.com']
+    function ownerEmails() { return ['robbani.zuhal@gmail.com']; }
+
+    function signedIn() {
+      return request.auth != null
+        && request.auth.token.email is string
+        && request.auth.token.email_verified == true;
+    }
+    function myEmail() { return request.auth.token.email.lower(); }
+    function memberPath() { return /databases/$(database)/documents/members/$(myEmail()); }
+    function isMember() { return signedIn() && exists(memberPath()); }
+    function member() { return get(memberPath()).data; }
+    function isOwner() { return signedIn() && myEmail() in ownerEmails(); }
+    function isAdmin() { return isOwner() || (isMember() && member().role == 'admin'); }
+    function isInternal() { return isAdmin() || (isMember() && member().role == 'tim'); }
+    function isVendorOf(pid) {
+      return isMember() && member().role == 'vendor' && member().projects is list && pid in member().projects;
+    }
+
+    // Daftar pengguna: hanya Admin yang bisa mengubah. Setiap orang bisa membaca data dirinya sendiri.
+    match /members/{mail} {
+      allow get: if isInternal() || (signedIn() && myEmail() == mail);
+      allow list: if isInternal();
+      allow create, update: if isAdmin()
+        && mail == mail.lower()
+        && request.resource.data.role in ['admin', 'tim', 'vendor']
+        && request.resource.data.projects is list
+        // Admin biasa tidak bisa menurunkan perannya sendiri (pemilik selalu tetap Admin)
+        && (mail != myEmail() || isOwner() || request.resource.data.role == 'admin');
+      allow delete: if isAdmin() && mail != myEmail();
+    }
+
+    // Data perusahaan (kop, rekening) dan foto: internal saja
+    match /settings/{id} { allow read, write: if isInternal(); }
+    match /photos/{id} { allow read, write: if isInternal(); }
+
+    // Ringkasan progres tanpa angka uang: dibaca vendor yang ditugaskan
+    match /progress/{pid} {
+      allow get: if isInternal() || isVendorOf(pid);
+      allow list: if isInternal();
+      allow write: if isInternal();
+    }
+
+    // Data proyek lengkap (RAB, harga, termin, klien): internal saja
+    match /projects/{pid} {
+      allow read, write: if isInternal();
+
+      match /opname/{id} {
+        allow read: if isInternal() || isVendorOf(pid);
+        allow write: if isInternal();
+      }
+      match /daily/{id} { allow read, write: if isInternal(); }
+      match /expenses/{id} { allow read, write: if isInternal(); }
+    }
+  }
+}
