@@ -2,7 +2,7 @@
 // (db.doc(path).set/update/delete/get/onSnapshot, db.collection(path).orderBy().limit()...)
 import { initializeApp } from 'firebase/app';
 import {
-  getAuth, onAuthStateChanged, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult,
+  getAuth, onAuthStateChanged, GoogleAuthProvider, signInWithPopup,
   signInWithEmailAndPassword, createUserWithEmailAndPassword, sendEmailVerification, sendPasswordResetEmail, signOut
 } from 'firebase/auth';
 import {
@@ -25,7 +25,6 @@ export async function createBackend() {
   const fs = getFirestore(app);
   const auth = getAuth(app);
   auth.languageCode = 'id';
-  getRedirectResult(auth).catch(() => {});
 
   const wrapDoc = s => ({ id: s.id, exists: s.exists(), data: () => s.data() });
   const wrapQuery = s => ({ docs: s.docs.map(d => ({ id: d.id, data: () => d.data() })), metadata: { fromCache: s.metadata.fromCache } });
@@ -58,11 +57,8 @@ export async function createBackend() {
   const A = {
     onChange: cb => onAuthStateChanged(auth, u => cb(u && { email: u.email, emailVerified: u.emailVerified, name: u.displayName || '', providerId: u.providerData[0]?.providerId || '' })),
     google: async () => {
-      try { await signInWithPopup(auth, provider); }
-      catch (e) {
-        if (e.code === 'auth/popup-blocked' || e.code === 'auth/operation-not-supported-in-this-environment') return signInWithRedirect(auth, provider);
-        throw e;
-      }
+      // Hanya pop-up: login lewat redirect tidak andal bila aplikasi tidak di-host di domain Firebase.
+      await signInWithPopup(auth, provider);
     },
     signIn: (e, p) => signInWithEmailAndPassword(auth, e, p),
     signUp: async (e, p) => { const r = await createUserWithEmailAndPassword(auth, e, p); await sendEmailVerification(r.user); },
